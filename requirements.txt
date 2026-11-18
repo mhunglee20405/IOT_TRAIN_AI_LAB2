@@ -1,0 +1,10 @@
+ultralytics
+opencv-python
+matplotlib
+PyYAML
+requests
+fastapi
+uvicorn
+python-dotenv
+python-multipart
+

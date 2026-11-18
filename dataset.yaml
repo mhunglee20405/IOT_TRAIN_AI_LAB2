@@ -1,0 +1,15 @@
+# Cấu hình dataset YOLO cho bài toán Mask Detection
+# TRAINING: 2 classes — mask, no_mask
+# RUNTIME:  unknown = sinh ra khi confidence < threshold (không phải training class)
+
+path: dataset
+
+train: images/train
+val: images/val
+test: images/test
+
+nc: 2  # số training class
+
+names:
+  0: mask
+  1: no_mask
