@@ -1,0 +1,25 @@
+[Unit]
+Description=YOLO11n Cloud Mask Detection FastAPI Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/mask_detection
+Environment="PATH=/opt/mask_detection/venv/bin:/usr/local/bin:/usr/bin"
+Environment="CLOUD_MODEL_PATH=/opt/mask_detection/models/best.pt"
+Environment="CLOUD_INFERENCE_DEVICE=cpu"
+Environment="CLOUD_API_PORT=8001"
+Environment="CLOUD_API_HOST=127.0.0.1"
+# S3 Results Logging (ghi kết quả nhận diện)
+Environment="S3_RESULTS_ENABLED=true"
+Environment="S3_RESULTS_BUCKET=esp32-yolo-lab3-511974511954-ap-southeast-1-an"
+Environment="S3_RESULTS_PREFIX=results"
+Environment="S3_RESULTS_COOLDOWN=30.0"
+EnvironmentFile=-/opt/mask_detection/.env
+ExecStart=/opt/mask_detection/venv/bin/uvicorn cloud_api.main:app --host 127.0.0.1 --port 8001 --workers 1 --log-level info
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

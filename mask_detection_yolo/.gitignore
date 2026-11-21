@@ -1,0 +1,52 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.idea/
+.vscode/
+
+# YOLO training runs
+runs/
+
+# Model files (lớn, không commit)
+*.pt
+*.onnx
+*.engine
+*.tflite
+
+# Results và models (giữ .gitkeep)
+results/*
+!results/.gitkeep
+
+models/*
+!models/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+
+dataset_raw/
+dataset/
+*.zip
+*.pt
+*.onnx

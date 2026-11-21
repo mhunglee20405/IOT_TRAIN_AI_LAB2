@@ -1,0 +1,23 @@
+{
+  "model_path": "D:/PTIT D23 N23-091/YEAR 4/IOT_TRAIN AI/mask_detection_yolo/runs/detect/results/train/antigravity_gpu_v1/weights/best.pt",
+  "conf_floor": 0.2,
+  "accept_thresh": 0.75,
+  "iou_thresh": 0.5,
+  "class_names": {
+    "0": "mask",
+    "1": "no_mask"
+  },
+  "unknown_label": "unknown",
+  "metrics_on_validation": {
+    "accepted_precision": 0.9583,
+    "coverage": 0.6911,
+    "correct_coverage": 0.6798,
+    "unknown_rate": 0.3858,
+    "false_confident_rate": 0.0417,
+    "missed_detection_rate": 0.0719
+  },
+  "esp32_accuracy_status": "provisional",
+  "calibrated_at": "2026-10-17T16:53:25.394235",
+  "dataset_used": "dataset/images/val",
+  "optimization_criterion": "maximize_coverage_subject_to_precision_ge_0.95"
+}
