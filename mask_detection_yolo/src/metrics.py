@@ -142,12 +142,17 @@ def summarize_metrics(
         "cloud_predict_wall_ms",
         "cloud_request_response_ms",
         "cloud_transport_overhead_est_ms",
+        "e2e_display_ms",
     ]
 
     latency_summary: Dict[str, Dict[str, float]] = {}
 
     for field in metric_fields:
-        vals = [getattr(r, field) for r in success_records]
+        if field == "e2e_display_ms":
+            # Chỉ thống kê các frame đã nhận được Browser ACK (> 0) để tránh giá trị 0.0 làm sai lệch trung bình
+            vals = [getattr(r, field) for r in success_records if getattr(r, field, 0.0) > 0.0]
+        else:
+            vals = [getattr(r, field) for r in success_records]
         if vals:
             latency_summary[field] = {
                 "avg": round(sum(vals) / len(vals), 2),
@@ -233,6 +238,7 @@ class PerformanceTracker:
             "latency_totals_ms": {
                 "server_processing": summary["latency_ms"].get("server_processing_ms", {}),
                 "total_loop": summary["latency_ms"].get("total_loop_ms", {}),
+                "e2e_display": summary["latency_ms"].get("e2e_display_ms", {}),
             },
             "cloud_latency_ms": {
                 "cloud_inference": summary["latency_ms"].get("cloud_inference_ms", {}),
@@ -241,9 +247,10 @@ class PerformanceTracker:
                 "cloud_transport_overhead_est": summary["latency_ms"].get("cloud_transport_overhead_est_ms", {}),
             },
             "display_latency_status": {
-                "measured": True,
+                "measured": summary["latency_ms"].get("e2e_display_ms", {}).get("avg", 0.0) > 0.0,
                 "type": "render_ack_latency",
                 "method": "Browser ACK (requestAnimationFrame + HTTP ACK)",
+                "stats_ms": summary["latency_ms"].get("e2e_display_ms", {}),
                 "note": "Ước lượng đo từ khi Gateway bắt đầu lấy frame ESP32-CAM (/capture) đến khi server nhận ACK xác nhận hiển thị từ trình duyệt sau khi giải mã và đưa vào chu kỳ hiển thị requestAnimationFrame (bao gồm overhead gửi HTTP ACK, không phải thời điểm xuất hiện vật lý photon trên màn hình).",
             },
             "definitions": {
@@ -433,6 +440,20 @@ class BenchmarkSession:
 | **Transport Overhead Est.** | {lat.get('cloud_transport_overhead_est_ms', {}).get('avg', 0)} | {lat.get('cloud_transport_overhead_est_ms', {}).get('p50', 0)} | {lat.get('cloud_transport_overhead_est_ms', {}).get('p95', 0)} | {lat.get('cloud_transport_overhead_est_ms', {}).get('min', 0)} | {lat.get('cloud_transport_overhead_est_ms', {}).get('max', 0)} |
 """
 
+        e2e_lat = lat.get("e2e_display_ms", {})
+        e2e_sample_count = sum(
+            1 for r in self.records if r.success and getattr(r, "e2e_display_ms", 0.0) > 0.0
+        )
+        if e2e_sample_count > 0:
+            e2e_table_md = f"""
+| Chỉ số Độ trễ Toàn trình | Số mẫu | Average (ms) | P50 / Median (ms) | P95 (ms) | Min (ms) | Max (ms) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **End-to-End Display Latency (Browser ACK)** | {e2e_sample_count} | **{e2e_lat.get('avg', 0)}** | **{e2e_lat.get('p50', 0)}** | **{e2e_lat.get('p95', 0)}** | {e2e_lat.get('min', 0)} | {e2e_lat.get('max', 0)} |
+| **Gateway Total Pipeline Loop** | {summary['success_frames']} | {lat.get('total_loop_ms', {}).get('avg', 0)} | {lat.get('total_loop_ms', {}).get('p50', 0)} | {lat.get('total_loop_ms', {}).get('p95', 0)} | {lat.get('total_loop_ms', {}).get('min', 0)} | {lat.get('total_loop_ms', {}).get('max', 0)} |
+"""
+        else:
+            e2e_table_md = "\n*Chưa ghi nhận mẫu Browser ACK trong phiên benchmark này (cần mở trang Web Dashboard trên trình duyệt trong lúc chạy benchmark để đo `e2e_display_ms`).*\n"
+
         report_md = f"""# Báo Cáo Thực Nghiệm Hiệu Năng (Benchmark Performance Report)
 
 - **Kịch bản kiểm thử:** `{self.scenario_id}` — {self.scenario_desc}
@@ -455,8 +476,8 @@ class BenchmarkSession:
 | **Tốc độ khung hình tức thời (Current FPS)** | {summary['current_fps']} FPS |
 
 *Ghi chú về phân biệt FPS:*
-- **Throughput FPS:** Đo lường thông lượng thực tế dựa trên số khung hình hoàn thành chia cho tổng thời gian trôi qua thực tế ($\text{{Completed Frames}} / \text{{Elapsed Seconds}}$).
-- **Rolling Loop FPS:** Tính toán dựa trên độ trễ trung bình của một chu kỳ lặp ($1000 / \bar{{t}}_{{\\text{{loop}}}}$).
+- **Throughput FPS:** Đo lường thông lượng thực tế dựa trên số khung hình hoàn thành chia cho tổng thời gian trôi qua thực tế ($\\text{{Completed Frames}} / \\text{{Elapsed Seconds}}$).
+- **Rolling Loop FPS:** Tính toán dựa trên độ trễ trung bình của một chu kỳ lặp ($1000 / \\bar{{t}}_{{\\text{{loop}}}}$).
 
 ---
 
@@ -484,7 +505,7 @@ class BenchmarkSession:
 - Phương pháp: **Browser Acknowledgment (requestAnimationFrame + HTTP ACK)**.
 - Định nghĩa: Đo từ lúc Gateway bắt đầu GET `/capture` từ ESP32-CAM đến khi trình duyệt giải mã frame, đưa vào chu kỳ hiển thị qua `requestAnimationFrame`, và gửi HTTP ACK về server.
 - Ghi chú kỹ thuật: Đây là ước lượng render-ack latency (bao gồm overhead gửi ACK trên mạng), không tuyên bố là thời điểm xuất hiện photon vật lý trên tấm nền màn hình. Không sử dụng Gateway Pipeline Latency để thay thế cho Display Latency.
-
+{e2e_table_md}
 ---
 *Báo cáo được sinh tự động bởi hệ thống Multi-Person Face Mask Detection Performance Tracker.*
 """

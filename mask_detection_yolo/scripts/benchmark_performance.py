@@ -125,22 +125,26 @@ def parse_benchmark_csv(csv_path: Path) -> Dict[str, Any]:
         d1 = sorted_list[int(c)] * (k - f)
         return d0 + d1
 
-    def stats(key: str) -> Dict[str, float]:
+    def stats(key: str, positive_only: bool = False) -> Dict[str, float]:
         vals = [float(r[key]) for r in success if r.get(key) not in (None, "")]
+        if positive_only:
+            vals = [v for v in vals if v > 0.0]
         if not vals:
-            return {"avg": 0.0, "p50": 0.0, "p95": 0.0}
+            return {"avg": 0.0, "p50": 0.0, "p95": 0.0, "count": 0}
         vals.sort()
         n = len(vals)
         avg = sum(vals) / n
         p50 = calc_percentile(vals, 50.0)
         p95 = calc_percentile(vals, 95.0)
-        return {"avg": round(avg, 2), "p50": round(p50, 2), "p95": round(p95, 2)}
+        return {"avg": round(avg, 2), "p50": round(p50, 2), "p95": round(p95, 2), "count": n}
 
     fps_vals = [float(r["fps"]) for r in success if r.get("fps")]
     avg_loop_fps = sum(fps_vals) / len(fps_vals) if fps_vals else 0.0
+    has_cloud = any((r.get("inference_mode") or "").strip().lower() == "cloud" for r in records)
 
     return {
         "csv_path": str(csv_path),
+        "inference_mode": "cloud" if has_cloud else "local",
         "total_frames": total,
         "success_frames": len(success),
         "failed_frames": failed,
@@ -154,6 +158,11 @@ def parse_benchmark_csv(csv_path: Path) -> Dict[str, Any]:
         "jpeg_encode": stats("encode_ms"),
         "server_processing": stats("server_processing_ms"),
         "total_loop": stats("total_loop_ms"),
+        "cloud_inference": stats("cloud_inference_ms", positive_only=True),
+        "cloud_server": stats("cloud_server_ms", positive_only=True),
+        "cloud_rtt": stats("cloud_request_response_ms", positive_only=True),
+        "cloud_transport": stats("cloud_transport_overhead_est_ms"),
+        "e2e_display": stats("e2e_display_ms", positive_only=True),
     }
 
 
@@ -235,6 +244,45 @@ def run_single_benchmark(
     except Exception as e:
         print("[!] Lỗi khi lấy kết quả cuối:", e)
         return None
+
+
+def print_run_summary(run_stat: Dict[str, Any], scenario: str):
+    """In bảng tóm tắt độ trễ (bao gồm Cloud Inference, Local <-> Cloud RTT và E2E Display)."""
+    mode = run_stat.get("inference_mode", "local").upper()
+    print("\n" + "=" * 74)
+    print(f"  KẾT QUẢ ĐO ĐỘ TRỄ CHI TIẾT (Kịch bản {scenario} | Chế độ: {mode})")
+    print("=" * 74)
+    print(
+        f"  Frames: {run_stat['success_frames']}/{run_stat['total_frames']} OK "
+        f"| Failed: {run_stat['failed_frames']} "
+        f"| Throughput: {run_stat['throughput_fps']:.2f} FPS "
+        f"| Loop FPS: {run_stat['average_loop_fps']:.2f} FPS"
+    )
+    print("  " + "-" * 72)
+    print(f"  {'Chỉ số độ trễ':<38} {'Avg (ms)':>10} {'P50 (ms)':>10} {'P95 (ms)':>10}")
+    print("  " + "-" * 72)
+
+    def _row(label: str, st: Dict[str, float]):
+        print(f"  {label:<38} {st.get('avg', 0.0):>10.2f} {st.get('p50', 0.0):>10.2f} {st.get('p95', 0.0):>10.2f}")
+
+    if mode == "CLOUD":
+        _row("a) Cloud Inference (YOLO trên Cloud)", run_stat.get("cloud_inference", {}))
+        _row("   Cloud Server Total (Decode+Infer)", run_stat.get("cloud_server", {}))
+        _row("b) Local <-> Cloud Response (RTT)", run_stat.get("cloud_rtt", {}))
+        _row("   Transport Overhead (Ước lượng)", run_stat.get("cloud_transport", {}))
+    else:
+        _row("Local YOLO Inference", run_stat.get("inference", {}))
+
+    _row("   HTTP Capture (ESP32-CAM)", run_stat.get("http_capture", {}))
+    _row("c) Total Pipeline Loop (Gateway)", run_stat.get("total_loop", {}))
+
+    e2e = run_stat.get("e2e_display", {})
+    if e2e.get("count", 0) > 0:
+        _row(f"c) End-to-End Display (ACK, n={e2e['count']})", e2e)
+    else:
+        print("  c) End-to-End Display (Browser ACK)    Chưa có mẫu (hãy mở Dashboard trên trình duyệt)")
+
+    print("=" * 74)
 
 
 def print_comparison_table(baseline: Dict[str, Any], current: Dict[str, Any], scenario: str):
@@ -348,6 +396,7 @@ def main():
 
     # 3. Tổng hợp kết quả các lần chạy
     latest_run = all_runs_stats[-1]
+    print_run_summary(latest_run, args.scenario)
 
     if len(all_runs_stats) > 1:
         print("\n" + "=" * 70)
@@ -375,6 +424,15 @@ def main():
         print(f"  HTTP Capture Avg  : {m_cap:.2f} ± {s_cap:.2f} ms")
         print(f"  Inference Avg     : {m_inf:.2f} ± {s_inf:.2f} ms")
         print(f"  Total Loop Avg    : {m_tot:.2f} ± {s_tot:.2f} ms")
+        if any(r.get("inference_mode") == "cloud" for r in all_runs_stats):
+            m_cinf, s_cinf = mean_std([r["cloud_inference"]["avg"] for r in all_runs_stats])
+            m_crtt, s_crtt = mean_std([r["cloud_rtt"]["avg"] for r in all_runs_stats])
+            print(f"  Cloud Infer Avg   : {m_cinf:.2f} ± {s_cinf:.2f} ms")
+            print(f"  Local-Cloud RTT   : {m_crtt:.2f} ± {s_crtt:.2f} ms")
+        e2e_runs = [r["e2e_display"]["avg"] for r in all_runs_stats if r.get("e2e_display", {}).get("count", 0) > 0]
+        if e2e_runs:
+            m_e2e, s_e2e = mean_std(e2e_runs)
+            print(f"  E2E Display Avg   : {m_e2e:.2f} ± {s_e2e:.2f} ms")
         print("=" * 70)
 
     # 4. Đối chiếu với Baseline nếu có
