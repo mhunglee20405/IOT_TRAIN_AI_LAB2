@@ -180,6 +180,113 @@ class TestMetrics(unittest.TestCase):
                 self.assertIn("S1", rep_content)
                 self.assertIn("YOLO11n Inference", rep_content)
 
+    def test_cloud_and_e2e_display_summary_and_report(self):
+        """Kiểm tra thống kê Cloud + End-to-End Display Latency trong summarize, API, report và CSV parser."""
+        from scripts.benchmark_performance import parse_benchmark_csv
+
+        records = [
+            LatencyRecord(
+                frame_index=1,
+                timestamp=1000.0,
+                success=True,
+                inference_mode="cloud",
+                capture_http_ms=30.0,
+                decode_ms=4.0,
+                inference_ms=42.0,
+                render_ms=2.0,
+                encode_ms=5.0,
+                server_processing_ms=91.0,
+                total_loop_ms=121.0,
+                fps=8.3,
+                cloud_inference_ms=42.0,
+                cloud_server_ms=48.0,
+                cloud_request_response_ms=80.0,
+                cloud_transport_overhead_est_ms=32.0,
+                e2e_display_ms=0.0,  # Frame đầu chưa có Browser ACK
+            ),
+            LatencyRecord(
+                frame_index=2,
+                timestamp=1000.2,
+                success=True,
+                inference_mode="cloud",
+                capture_http_ms=32.0,
+                decode_ms=4.0,
+                inference_ms=46.0,
+                render_ms=2.0,
+                encode_ms=5.0,
+                server_processing_ms=101.0,
+                total_loop_ms=133.0,
+                fps=7.5,
+                cloud_inference_ms=46.0,
+                cloud_server_ms=52.0,
+                cloud_request_response_ms=90.0,
+                cloud_transport_overhead_est_ms=38.0,
+                e2e_display_ms=150.0,
+            ),
+            LatencyRecord(
+                frame_index=3,
+                timestamp=1000.4,
+                success=True,
+                inference_mode="cloud",
+                capture_http_ms=34.0,
+                decode_ms=4.0,
+                inference_ms=50.0,
+                render_ms=2.0,
+                encode_ms=5.0,
+                server_processing_ms=111.0,
+                total_loop_ms=145.0,
+                fps=6.9,
+                cloud_inference_ms=50.0,
+                cloud_server_ms=56.0,
+                cloud_request_response_ms=100.0,
+                cloud_transport_overhead_est_ms=44.0,
+                e2e_display_ms=170.0,
+            ),
+        ]
+
+        # 1. summarize_metrics: e2e_display_ms chỉ tính trên mẫu > 0 (150 và 170 -> avg 160)
+        summary = summarize_metrics(records)
+        e2e_stat = summary["latency_ms"]["e2e_display_ms"]
+        self.assertEqual(e2e_stat["avg"], 160.0)
+        self.assertEqual(e2e_stat["min"], 150.0)
+        self.assertEqual(e2e_stat["max"], 170.0)
+        self.assertEqual(summary["latency_ms"]["cloud_inference_ms"]["avg"], 46.0)
+        self.assertEqual(summary["latency_ms"]["cloud_request_response_ms"]["avg"], 90.0)
+
+        # 2. PerformanceTracker API output
+        tracker = PerformanceTracker(window_size=10)
+        for r in records:
+            tracker.record_frame(r)
+        api_data = tracker.get_metrics_api_data("connected", inference_mode="cloud")
+        self.assertEqual(api_data["latency_totals_ms"]["e2e_display"]["avg"], 160.0)
+        self.assertTrue(api_data["display_latency_status"]["measured"])
+        self.assertEqual(api_data["display_latency_status"]["stats_ms"]["avg"], 160.0)
+
+        # 3. BenchmarkSession report + parse_benchmark_csv
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            session = BenchmarkSession(
+                scenario_id="S1",
+                duration_seconds=10.0,
+                output_dir=Path(tmp_dir),
+            )
+            session.start()
+            for r in records:
+                session.add_record(r)
+            session.stop()
+
+            rep_content = session.report_path.read_text(encoding="utf-8")
+            self.assertIn("Cloud YOLO Inference (CPU)", rep_content)
+            self.assertIn("Local-Cloud Request-Response (RTT)", rep_content)
+            self.assertIn("End-to-End Display Latency (Browser ACK)", rep_content)
+            self.assertIn("160.0", rep_content)
+
+            parsed = parse_benchmark_csv(session.csv_path)
+            self.assertEqual(parsed["inference_mode"], "cloud")
+            self.assertEqual(parsed["cloud_inference"]["avg"], 46.0)
+            self.assertEqual(parsed["cloud_rtt"]["avg"], 90.0)
+            self.assertEqual(parsed["e2e_display"]["avg"], 160.0)
+            self.assertEqual(parsed["e2e_display"]["count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
